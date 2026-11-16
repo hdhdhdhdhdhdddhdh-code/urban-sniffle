@@ -1,0 +1,15 @@
+{
+  "name": "barcode-bridge",
+  "version": "1.0.0",
+  "description": "Scan barcodes on the phone and type them on the laptop",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

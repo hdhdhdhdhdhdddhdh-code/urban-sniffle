@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0f172a">
+<title>ماسح الباركود</title>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--line:#334155;--text:#f1f5f9;--muted:#94a3b8;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--accent:#38bdf8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;font-size:16px;line-height:1.5}
+main{max-width:520px;margin:0 auto;padding:16px;padding-bottom:calc(24px + env(safe-area-inset-bottom))}
+h1{font-size:20px;margin:0 0 12px}
+.pill{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;background:var(--card);border:1px solid var(--line);font-size:15px;margin-bottom:12px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--bad);flex:none}
+.dot.warn{background:var(--warn)}.dot.ok{background:var(--ok)}
+#reader{width:100%;min-height:240px;background:#000;border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+#reader video{width:100%!important;object-fit:cover}
+.hint{color:var(--muted);font-size:14px;margin:8px 2px 12px}
+button{font:inherit;border:0;border-radius:12px;padding:14px 16px;cursor:pointer;background:var(--accent);color:#04202e;font-weight:700;width:100%}
+button.sec{background:var(--card);color:var(--text);border:1px solid var(--line);font-weight:500}
+button:disabled{opacity:.5}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:12px}
+.last-code{font-family:ui-monospace,Consolas,monospace;font-size:22px;word-break:break-all;direction:ltr;text-align:left;min-height:32px}
+.status{font-size:14px;color:var(--muted)}
+.status.ok{color:var(--ok)}.status.bad{color:var(--bad)}
+label.opt{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:15px}
+input[type=checkbox]{width:20px;height:20px}
+input[type=text]{width:100%;font:inherit;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);direction:ltr}
+ul{list-style:none;margin:8px 0 0;padding:0}
+li{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid var(--line);font-family:ui-monospace,Consolas,monospace;font-size:14px;direction:ltr}
+li:first-child{border-top:0}
+li span{color:var(--muted)}
+.row{display:flex;gap:10px;margin-top:12px}
+.hidden{display:none}
+a.link{color:var(--muted);font-size:13px;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;width:auto;font-weight:400}
+</style>
+</head>
+<body>
+<main>
+  <h1>ماسح الباركود</h1>
+  <div class="pill"><span id="dot" class="dot"></span><span id="conn">جارٍ الاتصال…</span></div>
+
+  <section id="pair" class="card hidden">
+    <p style="margin-top:0">أدخل رمز الاقتران الظاهر في برنامج اللابتوب (أو افتح الرابط الذي عرضه البرنامج مباشرة).</p>
+    <input id="roomInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="pairing code">
+    <div class="row"><button id="savePair">حفظ</button></div>
+  </section>
+
+  <section id="scan" class="hidden">
+    <div id="reader"></div>
+    <p class="hint" id="hint">اضغط «تشغيل الكاميرا» ثم وجّه الباركود نحو الكاميرا.</p>
+    <button id="toggle">تشغيل الكاميرا</button>
+
+    <div class="card">
+      <div class="status" id="lastLabel">آخر نتيجة</div>
+      <div class="last-code" id="lastCode">—</div>
+      <div class="status" id="lastStatus"></div>
+    </div>
+
+    <label class="opt"><input type="checkbox" id="enter"> اضغط Enter بعد الكتابة</label>
+
+    <div class="card">
+      <div class="status">السجل</div>
+      <ul id="history"></ul>
+    </div>
+
+    <p style="text-align:center;margin-top:16px"><button class="link" id="reset">تغيير رمز الاقتران</button></p>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var ROOM_RE = /^[A-Za-z0-9_-]{12,64}$/;
+
+  function store(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+  // ---- pairing code -------------------------------------------------------
+  var params = new URLSearchParams(location.search);
+  var room = params.get('k') || load('bb_room') || '';
+  if (params.get('k')) {
+    store('bb_room', room);
+    history.replaceState(null, '', location.pathname); // hide the code from the address bar
+  }
+  var valid = function (r) { return ROOM_RE.test(r || ''); };
+
+  $('enter').checked = load('bb_enter') === '1';
+  $('enter').addEventListener('change', function () { store('bb_enter', this.checked ? '1' : '0'); });
+
+  $('savePair').addEventListener('click', function () {
+    var v = $('roomInput').value.trim();
+    if (!valid(v)) { alert('الرمز غير صحيح'); return; }
+    store('bb_room', v);
+    location.reload();
+  });
+  $('reset').addEventListener('click', function () {
+    try { localStorage.removeItem('bb_room'); } catch (e) {}
+    location.reload();
+  });
+
+  if (!valid(room)) {
+    $('pair').classList.remove('hidden');
+    $('conn').textContent = 'لم يتم الاقتران بعد';
+    return;
+  }
+  $('scan').classList.remove('hidden');
+
+  // ---- connection to the relay -------------------------------------------
+  var ws = null, retry = 0, laptops = 0, serverUp = false;
+
+  function renderStatus() {
+    var dot = $('dot'), txt = $('conn');
+    dot.className = 'dot';
+    if (!serverUp) { txt.textContent = 'الخادم غير متصل — جارٍ إعادة المحاولة…'; return; }
+    if (laptops > 0) { dot.className = 'dot ok'; txt.textContent = 'اللابتوب متصل ✓'; }
+    else { dot.className = 'dot warn'; txt.textContent = 'الخادم متصل · شغّل برنامج اللابتوب'; }
+  }
+
+  var pending = null;
+  function connect() {
+    var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(proto + '://' + location.host + '/ws?room=' + encodeURIComponent(room) + '&role=phone');
+    ws.onopen = function () { retry = 0; serverUp = true; renderStatus(); };
+    ws.onmessage = function (e) {
+      var m; try { m = JSON.parse(e.data); } catch (x) { return; }
+      if (m.type === 'status') { laptops = m.laptops; renderStatus(); }
+      else if (m.type === 'ack' && m.id === pending) {
+        setStatus(m.ok ? 'تمت الكتابة على اللابتوب ✓' : 'فشلت الكتابة على اللابتوب', m.ok ? 'ok' : 'bad');
+      } else if (m.type === 'nack' && m.id === pending) {
+        setStatus('اللابتوب غير متصل — لم يُرسل', 'bad');
+      }
+    };
+    ws.onclose = function () {
+      serverUp = false; laptops = 0; renderStatus();
+      setTimeout(connect, Math.min(1000 * Math.pow(2, retry++), 10000));
+    };
+    ws.onerror = function () { try { ws.close(); } catch (x) {} };
+  }
+  connect();
+
+  // ---- UI helpers ---------------------------------------------------------
+  function setStatus(t, cls) { var s = $('lastStatus'); s.textContent = t; s.className = 'status ' + (cls || ''); }
+  function addHistory(code) {
+    var li = document.createElement('li');
+    var a = document.createElement('b'); a.textContent = code;
+    var b = document.createElement('span');
+    b.textContent = new Date().toLocaleTimeString('en-GB');
+    li.appendChild(a); li.appendChild(b);
+    var ul = $('history');
+    ul.insertBefore(li, ul.firstChild);
+    while (ul.children.length > 8) ul.removeChild(ul.lastChild);
+  }
+
+  var actx = null;
+  function beep() {
+    try {
+      var o = actx.createOscillator(), g = actx.createGain();
+      o.frequency.value = 880; g.gain.value = 0.08;
+      o.connect(g); g.connect(actx.destination);
+      o.start(); o.stop(actx.currentTime + 0.12);
+    } catch (e) {}
+  }
+
+  var seq = 0, lastCode = '', lastTime = 0;
+  function onCode(text) {
+    text = String(text || '').trim();
+    if (!text) return;
+    var now = Date.now();
+    var dup = text === lastCode && now - lastTime < 3000;
+    lastCode = text; lastTime = now;
+    if (dup) return; // same barcode still in front of the camera
+
+    beep();
+    if (navigator.vibrate) navigator.vibrate(80);
+    $('lastCode').textContent = text;
+    addHistory(text);
+
+    if (!ws || ws.readyState !== 1) { setStatus('لا يوجد اتصال بالخادم', 'bad'); return; }
+    pending = ++seq;
+    setStatus('جارٍ الإرسال…', '');
+    ws.send(JSON.stringify({ type: 'scan', id: pending, code: text, enter: $('enter').checked }));
+  }
+
+  // ---- camera / scanner ---------------------------------------------------
+  var scanner = null, running = false, wake = null;
+
+  function loadLib() {
+    return new Promise(function (res, rej) {
+      if (window.Html5Qrcode) return res();
+      var s = document.createElement('script');
+      s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+      s.onload = res;
+      s.onerror = function () { rej(new Error('lib')); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function makeScanner() {
+    var F = Html5QrcodeSupportedFormats;
+    return new Html5Qrcode('reader', {
+      formatsToSupport: [F.CODE_128, F.CODE_39, F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.ITF, F.CODABAR, F.QR_CODE],
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+      verbose: false
+    });
+  }
+
+  function boxFn(w, h) {
+    return { width: Math.floor(w * 0.92), height: Math.max(80, Math.floor(Math.min(h * 0.6, w * 0.45))) };
+  }
+
+  async function startScan() {
+    var btn = $('toggle');
+    btn.disabled = true;
+    try {
+      if (!window.isSecureContext) throw new Error('insecure');
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC && !actx) actx = new AC();
+      if (actx && actx.state === 'suspended') actx.resume();
+
+      await loadLib();
+      scanner = makeScanner();
+      var cfg = { fps: 12, qrbox: boxFn,
+        videoConstraints: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } };
+      try {
+        await scanner.start({ facingMode: 'environment' }, cfg, onCode, function () {});
+      } catch (e1) {
+        if (e1 && /permission|denied|notallowed/i.test(String(e1))) throw e1;
+        try { await scanner.clear(); } catch (x) {}
+        scanner = makeScanner();
+        delete cfg.videoConstraints;
+        await scanner.start({ facingMode: 'environment' }, cfg, onCode, function () {});
+      }
+      running = true;
+      btn.textContent = 'إيقاف الكاميرا';
+      btn.className = 'sec';
+      $('hint').textContent = 'وجّه الباركود إلى المستطيل. عند القراءة يُسمع صوت وتهتز الشاشة.';
+      try { if (navigator.wakeLock) wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+    } catch (e) {
+      var s = String(e && (e.message || e));
+      if (/insecure/.test(s)) $('hint').textContent = 'الكاميرا تحتاج رابط HTTPS.';
+      else if (/lib/.test(s)) $('hint').textContent = 'تعذّر تحميل مكتبة القراءة. تحقق من الإنترنت وأعد المحاولة.';
+      else if (/permission|denied|notallowed/i.test(s)) $('hint').textContent = 'اسمح للمتصفح باستخدام الكاميرا من إعدادات الموقع ثم أعد المحاولة.';
+      else $('hint').textContent = 'تعذّر تشغيل الكاميرا: ' + s;
+    }
+    btn.disabled = false;
+  }
+
+  async function stopScan() {
+    try { await scanner.stop(); scanner.clear(); } catch (e) {}
+    running = false;
+    try { if (wake) await wake.release(); } catch (e) {}
+    wake = null;
+    var btn = $('toggle');
+    btn.textContent = 'تشغيل الكاميرا';
+    btn.className = '';
+    $('hint').textContent = 'اضغط «تشغيل الكاميرا» ثم وجّه الباركود نحو الكاميرا.';
+  }
+
+  $('toggle').addEventListener('click', function () { running ? stopScan() : startScan(); });
+
+  document.addEventListener('visibilitychange', async function () {
+    if (document.visibilityState === 'visible' && running && !wake) {
+      try { if (navigator.wakeLock) wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+    }
+  });
+})();
+</script>
+</body>
+</html>
